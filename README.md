@@ -27,7 +27,3 @@ To get started with the mPy Dehumidifier Remote, follow these steps:
 ## Contributing
 
 Contributions are welcome! If you have any ideas for improvements or bug fixes, please submit a pull request.
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
