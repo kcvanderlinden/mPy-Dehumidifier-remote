@@ -2,14 +2,15 @@ import machine
 import time
 import boot
 import neopixel
-
+import dht
 from umqtt.simple2 import MQTTClient
-
 from config import CONFIG
 
-LED_PIN = machine.Pin(2, machine.Pin.OUT)
-
 np = neopixel.NeoPixel(machine.Pin(7), 1)
+d = dht.DHT22(machine.Pin(4))
+d_last_read = time.ticks_ms()
+# binary2 = machine.Pin(0, machine.Pin.IN) # not working, not stable
+power_pin = machine.Pin(2, machine.Pin.OUT)
 
 def rgb_control(r, g, b):
     np[0] = (r, g, b)
@@ -21,6 +22,37 @@ def rgb_sequence(seq_list: list, delay=0.5, end_is_off=True):
         time.sleep(delay)
     if end_is_off:
         rgb_control(0, 0, 0)
+
+def read_dht(boot=False, d_last_read=d_last_read):
+    print('Reading DHT')
+    if boot:
+        d.measure()
+        d_last_read = time.ticks_ms()
+        temperature = d.temperature()
+        humidity = d.humidity()
+        print('Temperature:', temperature)
+        print('Humidity:', humidity)
+        client.publish(b'homeassistant/esp8266_0001/temperature', str(temperature))
+        client.publish(b'homeassistant/esp8266_0001/humidity', str(humidity))
+        return temperature, humidity, d_last_read
+    elif time.ticks_ms()-d_last_read < 2000:
+        return d.temperature(), d.humidity(), d_last_read
+    else:
+        d.measure()
+        d_last_read = time.ticks_ms()
+        return d.temperature(), d.humidity(), d_last_read
+    
+def update_dht_values(prev_temperature, prev_humidity, d_last_read):
+    temperature, humidity, d_last_read = read_dht(d_last_read=d_last_read)
+    if temperature != prev_temperature or humidity != prev_humidity:
+        print('Temperature:', temperature)
+        print('Humidity:', humidity)
+        client.publish(b'homeassistant/esp8266_0001/temperature', str(temperature))
+        client.publish(b'homeassistant/esp8266_0001/humidity', str(humidity))
+    return temperature, humidity, d_last_read
+
+def binary_sensor_callback(p):
+    print(p.value())    
 
 def build_mqtt_topic(*args):
     """Join topic components with a '/' delimeters and encode as bytes
@@ -47,11 +79,10 @@ def my_callback(topic, message):
     print('Response:', message)
     # Check the content of the received message
     if message == b'TOGGLE':
-        print('Turning LED ON')
+        print('Pressing power button')
+        power_pin.on()
         rgb_sequence([(220, 28, 242)])
-        LED_PIN.on()
-        time.sleep(0.5)
-        LED_PIN.off()
+        power_pin.off()
     else:
         print('Unknown command')
 
@@ -71,17 +102,22 @@ try:
         print("Failed to connect to broker {}, will retry...".format(CONFIG['broker']))
         rgb_sequence([(128, 0, 0), (0, 0, 0)], end_is_off=False)
     client.set_callback(my_callback)
+    # binary2.irq(trigger=machine.Pin.IRQ_RISING, handler=binary_sensor_callback) # not working, not stable
     subscribe(client, b'homeassistant/esp8266_0001/control')
 
     wlan = boot.wlan_connect()
     client.publish(config_topic, 'Wifi is connected at {}'.format(wlan.ifconfig()))
+    read_dht(boot=True)
     rgb_sequence([(128, 0, 0), (0, 128, 0), (0, 0, 0)])
 
     print("Connected to {}".format(CONFIG['broker']))
     # Continuously checking for messages
     while True:
-        # time.sleep(2)
-        client.check_msg()
         print('Loop running')
+        time.sleep(0.5)
+        client.check_msg()
+        temperature, humidity, d_last_read = update_dht_values(d.temperature(), d.humidity(), d_last_read)
+
+        
 except Exception as e:
     print('Error:', e)
