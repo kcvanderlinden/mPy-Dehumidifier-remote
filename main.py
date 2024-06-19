@@ -1,21 +1,26 @@
 import machine
 import time
+import boot
+import neopixel
 
 from umqtt.simple2 import MQTTClient
 
-from config import load_config
+from config import CONFIG
 
 LED_PIN = machine.Pin(2, machine.Pin.OUT)
 
+np = neopixel.NeoPixel(machine.Pin(7), 1)
 
-def error_blink(duration=10):
-    for count in range(duration):
-        LED_PIN.on()
-        print('LED ON')
-        time.sleep(0.5)
-        LED_PIN.off()
-        time.sleep(0.5)
+def rgb_control(r, g, b):
+    np[0] = (r, g, b)
+    np.write()
 
+def rgb_sequence(seq_list: list, delay=0.5, end_is_off=True):
+    for seq in seq_list:
+        rgb_control(*seq)
+        time.sleep(delay)
+    if end_is_off:
+        rgb_control(0, 0, 0)
 
 def build_mqtt_topic(*args):
     """Join topic components with a '/' delimeters and encode as bytes
@@ -41,11 +46,11 @@ def my_callback(topic, message):
     print('Received message on topic:', topic)
     print('Response:', message)
     # Check the content of the received message
-    if message == b'ON':
+    if message == b'TOGGLE':
         print('Turning LED ON')
+        rgb_sequence([(220, 28, 242)])
         LED_PIN.on()
-    elif message == b'OFF':
-        print('Turning LED OFF')
+        time.sleep(0.5)
         LED_PIN.off()
     else:
         print('Unknown command')
@@ -54,21 +59,23 @@ def my_callback(topic, message):
 
 
 if __name__ == '__main__':
-    CONFIG = load_config()
+    CONFIG
     
 
 try:
     client = MQTTClient(CONFIG['client_id'], CONFIG['broker'], port=1883, user=None, password=None, keepalive=60, ssl=False)
-    # led_topic = build_mqtt_topic(CONFIG['topic'], CONFIG['client_id'], 'led')
+    config_topic = b'homeassistant/esp8266_0001/config'
     try:
         client.connect()
     except OSError:
         print("Failed to connect to broker {}, will retry...".format(CONFIG['broker']))
-        error_blink(10)
+        rgb_sequence([(128, 0, 0), (0, 0, 0)], end_is_off=False)
     client.set_callback(my_callback)
-    subscribe(client, b'homeassistant/esp8266_0001/led')
+    subscribe(client, b'homeassistant/esp8266_0001/control')
 
-    error_blink(3)
+    wlan = boot.wlan_connect()
+    client.publish(config_topic, 'Wifi is connected at {}'.format(wlan.ifconfig()))
+    rgb_sequence([(128, 0, 0), (0, 128, 0), (0, 0, 0)])
 
     print("Connected to {}".format(CONFIG['broker']))
     # Continuously checking for messages
